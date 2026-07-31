@@ -66,7 +66,7 @@
             <form id="barcodeForm" class="row g-2 align-items-center">
                 <div class="col-md-7 col-12">
                     <label for="barcodeInput" class="form-label fw-bold">Código de Barras (12 dígitos)</label>
-                    <input type="text" id="barcodeInput" class="form-control" placeholder="Ex: 123456789012" maxlength="12" pattern="\d{12}" required>
+                    <input type="text" id="barcodeInput" class="form-control" placeholder="Ex: 123456789012" maxlength="12" required>
                 </div>
                 <div class="col-md-3 col-6">
                     <label for="quantityInput" class="form-label fw-bold">Qtd Impressão</label>
@@ -120,7 +120,7 @@
     </div>
 </div>
 
-<!-- Bibliotecas: ZXing (Leitor de código ultra estável), html2pdf, Bootstrap -->
+<!-- Bibliotecas: ZXing (Leitor de Código), html2pdf, Bootstrap -->
 <script src="https://unpkg.com/@zxing/library@latest"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 
@@ -139,16 +139,21 @@
 
     renderTable();
 
-    // Adicionar item manualmente
+    // Adicionar item (via formulário ou após leitura)
     document.getElementById('barcodeForm').addEventListener('submit', function(e) {
         e.preventDefault();
-        const code = barcodeInput.value.trim();
-        const qty = parseInt(quantityInput.value, 10);
+        let code = barcodeInput.value.trim().replace(/\D/g, ''); // Remove não-dígitos
 
-        if (code.length !== 12 || isNaN(code)) {
-            alert('O código de barras deve conter exatamente 12 dígitos numéricos.');
-            return;
+        if (!code) return;
+
+        // Se o código tiver menos de 12 dígitos, preenche com zeros à esquerda
+        if (code.length < 12) {
+            code = code.padStart(12, '0');
+        } else if (code.length > 12) {
+            code = code.substring(0, 12); // Pega apenas os 12 primeiros
         }
+
+        const qty = parseInt(quantityInput.value, 10) || 1;
 
         addItem(code, qty);
         barcodeInput.value = '';
@@ -205,7 +210,7 @@
         }
     }
 
-    // Limpar tudo
+    // Limpar lista
     document.getElementById('btnClear').addEventListener('click', () => {
         if (items.length === 0) return;
         if (confirm('Deseja realmente apagar todos os itens salvos?')) {
@@ -214,7 +219,7 @@
         }
     });
 
-    // --- CÂMERA ROBUSTA VIA ZXING ---
+    // --- LEITOR DE CÂMERA ROBUSTO ---
     const btnCamera = document.getElementById('btnCamera');
 
     btnCamera.addEventListener('click', () => {
@@ -226,29 +231,24 @@
     });
 
     async function startCamera() {
-        // Validação de HTTPS (A Câmera no Android EXIGE HTTPS ou localhost)
-        if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-            alert("Atenção: A câmera do Android exige que o arquivo esteja rodando sob HTTPS. Se você abriu direto da pasta de downloads (file://), a câmera será bloqueada pelo navegador.");
-        }
-
         try {
             codeReader = new ZXing.BrowserMultiFormatReader();
             const videoInputDevices = await codeReader.listVideoInputDevices();
 
             if (videoInputDevices.length === 0) {
-                alert("Nenhuma câmera encontrada no dispositivo.");
+                alert("Nenhuma câmera foi encontrada no dispositivo.");
                 return;
             }
 
-            // Preenche as opções do Select de Câmeras
             cameraSelect.innerHTML = '';
             videoInputDevices.forEach((device, index) => {
                 const option = document.createElement('option');
                 option.value = device.deviceId;
                 option.text = device.label || `Câmera ${index + 1}`;
                 
-                // Tenta selecionar automaticamente a câmera traseira (back/environment)
-                if (!selectedDeviceId && (device.label.toLowerCase().includes('back') || device.label.toLowerCase().includes('traseira') || device.label.toLowerCase().includes('environment'))) {
+                // Prefere câmeras traseiras no Android
+                const label = device.label.toLowerCase();
+                if (!selectedDeviceId && (label.includes('back') || label.includes('traseira') || label.includes('environment') || label.includes('0'))) {
                     selectedDeviceId = device.deviceId;
                     option.selected = true;
                 }
@@ -256,7 +256,7 @@
             });
 
             if (!selectedDeviceId) {
-                selectedDeviceId = videoInputDevices[videoInputDevices.length - 1].deviceId; // Geralmente a última é a traseira no Android
+                selectedDeviceId = videoInputDevices[videoInputDevices.length - 1].deviceId;
             }
 
             cameraArea.classList.remove('d-none');
@@ -267,31 +267,36 @@
 
         } catch (err) {
             console.error(err);
-            alert("Erro ao inicializar a câmera. Verifique se deu permissão de acesso.");
+            alert("Erro ao acessar a câmera. Certifique-se de estar usando HTTPS e de ter concedido a permissão.");
         }
     }
 
     function decodeFromDevice(deviceId) {
         codeReader.decodeFromVideoDevice(deviceId, 'video', (result, err) => {
             if (result) {
-                const code = result.getText();
+                let code = result.getText().replace(/\D/g, ''); // Garante que pega apenas números
                 
-                // Aceita o código se for numérico
-                if (code.length === 12) {
+                if (code.length > 0) {
+                    // Preenche o campo de input
                     barcodeInput.value = code;
-                    navigator.vibrate?.(200); // Vibração ao ler
+                    
+                    // Vibra o celular no momento da leitura
+                    if (navigator.vibrate) {
+                        navigator.vibrate(200);
+                    }
+                    
+                    // Fecha a câmera automaticamente após ler para permitir a adição/ajuste da quantidade
                     stopCamera();
-                } else {
-                    barcodeInput.value = code; // Preenche mesmo se for outro tamanho para o usuário ver
                 }
             }
         });
     }
 
-    // Trocar de câmera no Select
     cameraSelect.addEventListener('change', (e) => {
         selectedDeviceId = e.target.value;
-        codeReader.reset();
+        if (codeReader) {
+            codeReader.reset();
+        }
         decodeFromDevice(selectedDeviceId);
     });
 
@@ -304,7 +309,7 @@
         isCameraRunning = false;
     }
 
-    // --- EXPORTAR PARA PDF ---
+    // --- GERAR PDF ---
     document.getElementById('btnPdf').addEventListener('click', () => {
         if (items.length === 0) {
             alert('Adicione ao menos um item antes de gerar o PDF.');
