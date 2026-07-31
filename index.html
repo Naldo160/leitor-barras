@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Leitor de Código de Barras</title>
+    <!-- CSS Bootstrap 5 -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- FontAwesome para Ícones -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        body {
+            background-color: #f8f9fa;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        #cameraContainer {
+            position: relative;
+            width: 100%;
+            max-width: 500px;
+            margin: 0 auto;
+            overflow: hidden;
+            border-radius: 12px;
+            background-color: #000;
+        }
+        #video {
+            width: 100%;
+            height: 250px;
+            object-fit: cover;
+            display: block;
+        }
+        .card {
+            border: none;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .table-responsive {
+            background-color: #fff;
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body class="py-4">
+
+<div class="container" style="max-width: 800px;">
+    <h2 class="text-center mb-4 text-primary"><i class="fa-solid fa-barcode"></i> Leitor & Gestor de Produtos</h2>
+
+    <!-- Área da Câmera e Entradas -->
+    <div class="card p-3 mb-4">
+        <div class="row g-3">
+            <div class="col-12 text-center">
+                <button id="btnCamera" class="btn btn-outline-primary w-100 mb-2">
+                    <i class="fa-solid fa-camera"></i> Abrir / Fechar Câmera (Android)
+                </button>
+                
+                <!-- Container de Vídeo e Seleção de Câmera -->
+                <div id="cameraArea" class="d-none">
+                    <div id="cameraContainer" class="mb-2">
+                        <video id="video"></video>
+                    </div>
+                    <select id="cameraSelect" class="form-select form-select-sm mb-3">
+                        <option value="">Carregando câmeras...</option>
+                    </select>
+                </div>
+            </div>
+
+            <form id="barcodeForm" class="row g-2 align-items-center">
+                <div class="col-md-7 col-12">
+                    <label for="barcodeInput" class="form-label fw-bold">Código de Barras (12 dígitos)</label>
+                    <input type="text" id="barcodeInput" class="form-control" placeholder="Ex: 123456789012" maxlength="12" pattern="\d{12}" required>
+                </div>
+                <div class="col-md-3 col-6">
+                    <label for="quantityInput" class="form-label fw-bold">Qtd Impressão</label>
+                    <input type="number" id="quantityInput" class="form-control" value="1" min="1" required>
+                </div>
+                <div class="col-md-2 col-6 d-flex align-items-end">
+                    <button type="submit" class="btn btn-success w-100">
+                        <i class="fa-solid fa-plus"></i> Add
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Tabela de Itens Lidos -->
+    <div id="pdfArea" class="card p-3 mb-4">
+        <h4 class="mb-3 text-secondary">Itens Registrados</h4>
+        <div class="table-responsive">
+            <table class="table table-striped table-hover align-middle">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Código Completo</th>
+                        <th>Produto (6)</th>
+                        <th>Tamanho (3)</th>
+                        <th>Cor (3)</th>
+                        <th class="text-center">Qtd</th>
+                        <th class="text-end action-column">Ações</th>
+                    </tr>
+                </thead>
+                <tbody id="itemsTableBody">
+                    <!-- Linhas adicionadas dinamicamente -->
+                </tbody>
+            </table>
+        </div>
+        <div id="emptyMessage" class="text-center text-muted py-3">Nenhum item adicionado até o momento.</div>
+    </div>
+
+    <!-- Botões de Ação -->
+    <div class="d-flex flex-wrap gap-2 justify-content-between">
+        <button id="btnClear" class="btn btn-outline-danger">
+            <i class="fa-solid fa-trash"></i> Limpar Lista
+        </button>
+        <div class="d-flex gap-2">
+            <button id="btnPdf" class="btn btn-danger">
+                <i class="fa-solid fa-file-pdf"></i> Salvar PDF
+            </button>
+            <button id="btnWhatsapp" class="btn btn-success">
+                <i class="fa-brands fa-whatsapp"></i> Enviar WhatsApp
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Bibliotecas: ZXing (Leitor de código ultra estável), html2pdf, Bootstrap -->
+<script src="https://unpkg.com/@zxing/library@latest"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+<script>
+    let items = JSON.parse(localStorage.getItem('scannedProducts')) || [];
+    let codeReader = null;
+    let selectedDeviceId = null;
+    let isCameraRunning = false;
+
+    const barcodeInput = document.getElementById('barcodeInput');
+    const quantityInput = document.getElementById('quantityInput');
+    const itemsTableBody = document.getElementById('itemsTableBody');
+    const emptyMessage = document.getElementById('emptyMessage');
+    const cameraArea = document.getElementById('cameraArea');
+    const cameraSelect = document.getElementById('cameraSelect');
+
+    renderTable();
+
+    // Adicionar item manualmente
+    document.getElementById('barcodeForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const code = barcodeInput.value.trim();
+        const qty = parseInt(quantityInput.value, 10);
+
+        if (code.length !== 12 || isNaN(code)) {
+            alert('O código de barras deve conter exatamente 12 dígitos numéricos.');
+            return;
+        }
+
+        addItem(code, qty);
+        barcodeInput.value = '';
+        quantityInput.value = '1';
+        barcodeInput.focus();
+    });
+
+    function addItem(code, qty) {
+        const item = {
+            id: Date.now(),
+            code: code,
+            produto: code.substring(0, 6),
+            tamanho: code.substring(6, 9),
+            cor: code.substring(9, 12),
+            quantity: qty
+        };
+
+        items.push(item);
+        saveAndRender();
+    }
+
+    function removeItem(id) {
+        items = items.filter(item => item.id !== id);
+        saveAndRender();
+    }
+
+    function saveAndRender() {
+        localStorage.setItem('scannedProducts', JSON.stringify(items));
+        renderTable();
+    }
+
+    function renderTable() {
+        itemsTableBody.innerHTML = '';
+        if (items.length === 0) {
+            emptyMessage.classList.remove('d-none');
+        } else {
+            emptyMessage.classList.add('d-none');
+            items.forEach(item => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><code>${item.code}</code></td>
+                    <td><strong>${item.produto}</strong></td>
+                    <td><span class="badge bg-secondary">${item.tamanho}</span></td>
+                    <td><span class="badge bg-info text-dark">${item.cor}</span></td>
+                    <td class="text-center fw-bold">${item.quantity}</td>
+                    <td class="text-end action-column">
+                        <button onclick="removeItem(${item.id})" class="btn btn-sm btn-outline-danger" title="Excluir">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </td>
+                `;
+                itemsTableBody.appendChild(tr);
+            });
+        }
+    }
+
+    // Limpar tudo
+    document.getElementById('btnClear').addEventListener('click', () => {
+        if (items.length === 0) return;
+        if (confirm('Deseja realmente apagar todos os itens salvos?')) {
+            items = [];
+            saveAndRender();
+        }
+    });
+
+    // --- CÂMERA ROBUSTA VIA ZXING ---
+    const btnCamera = document.getElementById('btnCamera');
+
+    btnCamera.addEventListener('click', () => {
+        if (isCameraRunning) {
+            stopCamera();
+        } else {
+            startCamera();
+        }
+    });
+
+    async function startCamera() {
+        // Validação de HTTPS (A Câmera no Android EXIGE HTTPS ou localhost)
+        if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+            alert("Atenção: A câmera do Android exige que o arquivo esteja rodando sob HTTPS. Se você abriu direto da pasta de downloads (file://), a câmera será bloqueada pelo navegador.");
+        }
+
+        try {
+            codeReader = new ZXing.BrowserMultiFormatReader();
+            const videoInputDevices = await codeReader.listVideoInputDevices();
+
+            if (videoInputDevices.length === 0) {
+                alert("Nenhuma câmera encontrada no dispositivo.");
+                return;
+            }
+
+            // Preenche as opções do Select de Câmeras
+            cameraSelect.innerHTML = '';
+            videoInputDevices.forEach((device, index) => {
+                const option = document.createElement('option');
+                option.value = device.deviceId;
+                option.text = device.label || `Câmera ${index + 1}`;
+                
+                // Tenta selecionar automaticamente a câmera traseira (back/environment)
+                if (!selectedDeviceId && (device.label.toLowerCase().includes('back') || device.label.toLowerCase().includes('traseira') || device.label.toLowerCase().includes('environment'))) {
+                    selectedDeviceId = device.deviceId;
+                    option.selected = true;
+                }
+                cameraSelect.appendChild(option);
+            });
+
+            if (!selectedDeviceId) {
+                selectedDeviceId = videoInputDevices[videoInputDevices.length - 1].deviceId; // Geralmente a última é a traseira no Android
+            }
+
+            cameraArea.classList.remove('d-none');
+            btnCamera.classList.replace('btn-outline-primary', 'btn-warning');
+            isCameraRunning = true;
+
+            decodeFromDevice(selectedDeviceId);
+
+        } catch (err) {
+            console.error(err);
+            alert("Erro ao inicializar a câmera. Verifique se deu permissão de acesso.");
+        }
+    }
+
+    function decodeFromDevice(deviceId) {
+        codeReader.decodeFromVideoDevice(deviceId, 'video', (result, err) => {
+            if (result) {
+                const code = result.getText();
+                
+                // Aceita o código se for numérico
+                if (code.length === 12) {
+                    barcodeInput.value = code;
+                    navigator.vibrate?.(200); // Vibração ao ler
+                    stopCamera();
+                } else {
+                    barcodeInput.value = code; // Preenche mesmo se for outro tamanho para o usuário ver
+                }
+            }
+        });
+    }
+
+    // Trocar de câmera no Select
+    cameraSelect.addEventListener('change', (e) => {
+        selectedDeviceId = e.target.value;
+        codeReader.reset();
+        decodeFromDevice(selectedDeviceId);
+    });
+
+    function stopCamera() {
+        if (codeReader) {
+            codeReader.reset();
+        }
+        cameraArea.classList.add('d-none');
+        btnCamera.classList.replace('btn-warning', 'btn-outline-primary');
+        isCameraRunning = false;
+    }
+
+    // --- EXPORTAR PARA PDF ---
+    document.getElementById('btnPdf').addEventListener('click', () => {
+        if (items.length === 0) {
+            alert('Adicione ao menos um item antes de gerar o PDF.');
+            return;
+        }
+
+        const element = document.getElementById('pdfArea');
+        document.querySelectorAll('.action-column').forEach(el => el.style.display = 'none');
+
+        const opt = {
+            margin:       0.5,
+            filename:     `Relatorio_Produtos_${new Date().toISOString().slice(0,10)}.pdf`,
+            image:        { type: 'jpeg', quality: 0.98 },
+            html2canvas:  { scale: 2 },
+            jsPDF:        { unit: 'in', format: 'letter', orientation: 'portrait' }
+        };
+
+        html2pdf().set(opt).from(element).save().then(() => {
+            document.querySelectorAll('.action-column').forEach(el => el.style.display = '');
+        });
+    });
+
+    // --- ENVIAR PARA WHATSAPP ---
+    document.getElementById('btnWhatsapp').addEventListener('click', () => {
+        if (items.length === 0) {
+            alert('A lista está vazia.');
+            return;
+        }
+
+        let text = "*Lista de Produtos para Impressão*\n\n";
+        items.forEach((item, index) => {
+            text += `*Item ${index + 1}:*\n`;
+            text += `• Código: ${item.code}\n`;
+            text += `• Produto: ${item.produto}\n`;
+            text += `• Tamanho: ${item.tamanho}\n`;
+            text += `• Cor: ${item.cor}\n`;
+            text += `• Qtd Impressão: *${item.quantity}*\n\n`;
+        });
+
+        const encodedText = encodeURIComponent(text);
+        window.open(`https://api.whatsapp.com/send?text=${encodedText}`, '_blank');
+    });
+</script>
+</body>
+</html>
